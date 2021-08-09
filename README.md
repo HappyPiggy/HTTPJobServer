@@ -41,3 +41,11 @@ http post 方式访问 http://local_host:8080/config/del，
 
 ```
 
+### 安装
+`sudo ./install.sh`
+
+
+
+### 运行说明
+
+安装成功后，服务会已docker实例的方式运行，执行记录默认保存在 /var/log/httpjob 目录下
