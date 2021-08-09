@@ -1,4 +1,3 @@
-
 #include <mutex>
 #include <vector>
 #include <random>
@@ -48,7 +47,7 @@ std::string GetUUID() {
 #define DeleteRecord_C "./record/job.log" 
 std::mutex logMutex;
 
-ThreadPool thread_pool(100);
+ThreadPool job_thread_pool(100);
 
 void writeLog(string log)  
 {    
@@ -75,6 +74,7 @@ void writeLog(string log)
 
 std::mutex mtx; 
 Jobs jobs;
+vector<string> prepared_jobs;
 
 std::shared_ptr<Jobs> AllJob(){
     mtx.lock();
@@ -119,7 +119,7 @@ void DelJob(string id){
     mtx.unlock();
 }
 
-void *doJob(void* p){
+void* doJob(void* p){
     Job* pJob = (Job*)p;
 
     httplib::Client cli(pJob->host, pJob->port);
@@ -128,10 +128,14 @@ void *doJob(void* p){
     if (pJob->scheme.compare("http") == 0)
     {
         cli.init_socket();
+        cli.set_close_socket_immediate(false);
+        cli.set_follow_location(true);
     }
     else if(pJob->scheme.compare("https") == 0)
     {
         ssl_cli.init_socket();
+        ssl_cli.set_close_socket_immediate(false);
+        ssl_cli.set_follow_location(true);
         ssl_cli.enable_server_certificate_verification(false);
     }
     else 
@@ -140,38 +144,40 @@ void *doJob(void* p){
     }
 
 
-    while(true){
-    int64_t _timems = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    if (pJob->time > _timems){
-        usleep(0);
-        continue;
-    }
+    while(true)
+    {
+        int64_t _timems = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if (pJob->time > _timems)
+        {
+            std::this_thread::yield();
+            continue;
+        }
 	
-	std::ostringstream logstr;    
-	logstr <<"current time:" << _timems << " start job:" << json::wrap(*pJob) << std::endl;
+	    std::ostringstream logstr;    
+	    logstr <<"current time:" << _timems << " start job:" << json::wrap(*pJob) << std::endl;
 	
-        try{	    
+        try
+        {	    
             if(pJob->scheme.compare("http") == 0)
             {
                 if(pJob->mothed.compare("GET") == 0 ){            
                     auto res = cli.Get(pJob->url.c_str());
-                    if (res) { 
-                    
-                        logstr << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() << " return " <<res->status << std::endl;
-                        logstr << res->get_header_value("Content-Type") << std::endl;
-                        logstr << res->body << std::endl;
-
-                    } 
-                } else if (pJob->mothed.compare("POST") == 0 )
-                {
-                    auto res = cli.Post(pJob->url.c_str(),pJob->body, pJob->contentType.c_str());
-                    if (res) {
-                        std::ostringstream restr;  
-                    
+                    if (res) 
+                    { 
                         logstr << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() << " return " << res->status << std::endl;
                         logstr << res->get_header_value("Content-Type") << std::endl;
                         logstr << res->body << std::endl;
 
+                    } 
+                } 
+                else if (pJob->mothed.compare("POST") == 0 )
+                {
+                    auto res = cli.Post(pJob->url.c_str(),pJob->body, pJob->contentType.c_str());
+                    if (res) 
+                    {
+                        logstr << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() << " return " << res->status << std::endl;
+                        logstr << res->get_header_value("Content-Type") << std::endl;
+                        logstr << res->body << std::endl;
                     } 
                 }
             
@@ -180,14 +186,14 @@ void *doJob(void* p){
             {
                 if(pJob->mothed.compare("GET") == 0 ){   
                     auto res = ssl_cli.Get(pJob->url.c_str());
-                    if (res) { 
-                    
+                    if (res) 
+                    { 
                         logstr << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() << " return " << res->status << std::endl;
                         logstr << res->get_header_value("Content-Type") << std::endl;
                         logstr << res->body << std::endl;
-
                     } 
-                } else if (pJob->mothed.compare("POST") == 0 )
+                } 
+                else if (pJob->mothed.compare("POST") == 0 )
                 {
                     auto res = ssl_cli.Post(pJob->url.c_str(),pJob->body, pJob->contentType.c_str());
                     if (res) {
@@ -199,14 +205,22 @@ void *doJob(void* p){
                     } 
                 }
             }
-            
             delete pJob;
-        
         }
         catch(...){
             printf("doJob error\n");
         }
+
+        usleep(5000);
         writeLog(logstr.str());
+        if (pJob->scheme.compare("http") == 0)
+        {
+            cli.clear_socket();
+        }
+        else if (pJob->scheme.compare("https") == 0)
+        {
+            ssl_cli.clear_socket();
+        }
         break;
     }
     
@@ -217,46 +231,53 @@ void *threadJobSchuler(void* n)
 {
     while (true)
     {
-	    try{
-	    	std::shared_ptr<Jobs> pjobs = AllJob();
-	       int64_t timems = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-	       int64_t needSleep = 50000;
-	       for (std::vector<Job>::iterator it = (*pjobs).jobs.begin(); it != (*pjobs).jobs.end(); it++)
-		    {           
-	    	
-		        if(it->time <= timems + 5000){
-			    Job* pJob = new Job();
-			    *pJob = *it;
-			 /*   pthread_t id;	
-			    pthread_create(&id, NULL, doJob, (void*)pJob);	*/
-                thread_pool.enqueue([](void* job) {doJob(job); }, (void*)pJob);
-			
-			    DelJob(it->id);
-		        }
-		        else{
-		            needSleep = it->time - timems > needSleep ? it->time - timems : needSleep;
-		        }
-		    }
+	    try
+        {
+            std::shared_ptr<Jobs> pjobs = AllJob();
+            int64_t timems = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            int64_t needSleep = 50000;
+            for (std::vector<Job>::iterator it = (*pjobs).jobs.begin(); it != (*pjobs).jobs.end(); it++)
+            {           
+                if(it->time <= timems + 3000)
+                {
+                    Job* pJob = new Job();
+                    *pJob = *it;
+                    job_thread_pool.enqueue([](void* job) {doJob(job); }, (void*)pJob);
+                    prepared_jobs.emplace_back(it->id);
+                }
+                else
+                {
+	                needSleep = it->time - timems > needSleep ? it->time - timems : needSleep;
+                }
+            }
 
-		if(needSleep > 5000)
-		    needSleep = 500;
-		else
-		    needSleep = 0;
+            if (prepared_jobs.size() != 0)
+            {
+                for(auto& job_id :prepared_jobs)
+                    DelJob(job_id);
+                prepared_jobs.clear();
+            }
 
-		usleep(needSleep);
+            if(needSleep > 5000)
+	            needSleep = 500;
+            else
+	            needSleep = 0;
+
+            usleep(needSleep);
 	    }
-	    catch(...){
+	    catch(...)
+        {
 	    }
-       
-
     }
     
     return 0;
 }
 
-void startJobSchuler() {
+void startJobSchuler() 
+{
+    printf("JobSchuler start");
+
     pthread_t id;
     pthread_create(&id, NULL, threadJobSchuler, NULL);
-    printf("JobSchuler start");
 }
 

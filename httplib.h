@@ -759,6 +759,10 @@ public:
 
   void init_socket();
 
+  void set_close_socket_immediate(bool close_immediate);
+
+  void clear_socket();
+
   void set_logger(Logger logger);
 
 protected:
@@ -769,6 +773,7 @@ protected:
   const int port_;
   const std::string host_and_port_;
   socket_t socket_cache_;
+  bool close_socket_immediate__ = true;
 
   // Settings
   std::string client_cert_path_;
@@ -1326,10 +1331,12 @@ template <typename T>
 inline bool process_and_close_socket(bool is_client_request, socket_t sock,
                                      size_t keep_alive_max_count,
                                      time_t read_timeout_sec,
-                                     time_t read_timeout_usec, T callback) {
+                                     time_t read_timeout_usec, T callback, bool close_socket_imme=true) {
   auto ret = process_socket(is_client_request, sock, keep_alive_max_count,
                             read_timeout_sec, read_timeout_usec, callback);
-  close_socket(sock);
+
+  if (close_socket_imme)
+        close_socket(sock);
   return ret;
 }
 
@@ -3463,6 +3470,20 @@ inline void Client::init_socket()
     this->socket_cache_ = create_client_socket();
 }
 
+inline void Client::set_close_socket_immediate(bool close_immediate)
+{
+    this->close_socket_immediate__ = close_immediate;
+}
+
+inline void Client::clear_socket()
+{
+    if (this->socket_cache_ != NULL)
+    {
+        detail::close_socket(this->socket_cache_);
+        this->socket_cache_ = NULL;
+    }
+}
+
 inline socket_t Client::create_client_socket() const {
   if (!proxy_host_.empty()) {
     return detail::create_client_socket(proxy_host_.c_str(), proxy_port_,
@@ -3876,7 +3897,7 @@ inline bool Client::process_and_close_socket(
   request_count = std::min(request_count, keep_alive_max_count_);
   return detail::process_and_close_socket(true, sock, request_count,
                                           read_timeout_sec_, read_timeout_usec_,
-                                          callback);
+                                          callback, this->close_socket_immediate__);
 }
 
 inline bool Client::is_ssl() const { return false; }
