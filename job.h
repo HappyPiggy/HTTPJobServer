@@ -46,14 +46,14 @@ struct JobDelReq
     JSON_BIND(JobDelReq, id);
 };
 
-struct Jobs
+struct HttpJobs
 {
     vector<Job> jobs;
 
-    JSON_BIND(Jobs, jobs);
+    JSON_BIND(HttpJobs, jobs);
 };
 
-extern std::shared_ptr<Jobs> AllJob();
+extern std::shared_ptr<HttpJobs> AllJob();
 extern string AddJob(JobReq job);
 extern void DelJob(string id);
-extern void startJobSchuler();
+extern void StartJobSchuler();

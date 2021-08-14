@@ -44,7 +44,7 @@ std::string GetUUID() {
 
 
 
-#define DeleteRecord_C "./record/job.log" 
+#define Record "./record/job.log" 
 std::mutex logMutex;
 
 ThreadPool job_thread_pool(100);
@@ -59,7 +59,7 @@ void writeLog(string log)
             mkdir("./record", 0755);
         }
         std::fstream f;
-        f.open(DeleteRecord_C, std::ios::out | std::ios::app);
+        f.open(Record, std::ios::out | std::ios::app);
         f << log << std::endl;
         f.close();
     }
@@ -73,13 +73,13 @@ void writeLog(string log)
 } 
 
 std::mutex mtx; 
-Jobs jobs;
+HttpJobs http_jobs;
 vector<string> prepared_jobs;
 
-std::shared_ptr<Jobs> AllJob(){
+std::shared_ptr<HttpJobs> AllJob(){
     mtx.lock();
-    std::shared_ptr<Jobs> p = std::make_shared<Jobs>();
-    *p = jobs;
+    std::shared_ptr<HttpJobs> p = std::make_shared<HttpJobs>();
+    *p = http_jobs;
 
     mtx.unlock();
 
@@ -100,7 +100,7 @@ string AddJob(JobReq jobreq){
     job.body = jobreq.body;
     job.port = jobreq.port;
     
-    jobs.jobs.push_back(job);
+    http_jobs.jobs.push_back(job);
 
     mtx.unlock();
 
@@ -109,10 +109,10 @@ string AddJob(JobReq jobreq){
 }
 void DelJob(string id){
     mtx.lock();
-    for (std::vector<Job>::iterator it = jobs.jobs.begin(); it != jobs.jobs.end(); it++)
+    for (std::vector<Job>::iterator it = http_jobs.jobs.begin(); it != http_jobs.jobs.end(); it++)
     {
         if(it->id == id){
-            jobs.jobs.erase(it);
+            http_jobs.jobs.erase(it);
             break;
         }
     }
@@ -149,7 +149,8 @@ void* doJob(void* p){
         int64_t _timems = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         if (pJob->time > _timems)
         {
-            std::this_thread::yield();
+            usleep(0);
+            //std::this_thread::yield();
             continue;
         }
 	
@@ -229,11 +230,12 @@ void* doJob(void* p){
 
 void *threadJobSchuler(void* n)
 {
+    printf("JobSchuler start\n");
     while (true)
     {
 	    try
         {
-            std::shared_ptr<Jobs> pjobs = AllJob();
+            std::shared_ptr<HttpJobs> pjobs = AllJob();
             int64_t timems = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
             int64_t needSleep = 50000;
             for (std::vector<Job>::iterator it = (*pjobs).jobs.begin(); it != (*pjobs).jobs.end(); it++)
@@ -273,10 +275,8 @@ void *threadJobSchuler(void* n)
     return 0;
 }
 
-void startJobSchuler() 
+void StartJobSchuler() 
 {
-    printf("JobSchuler start");
-
     pthread_t id;
     pthread_create(&id, NULL, threadJobSchuler, NULL);
 }
